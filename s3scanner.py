@@ -13,6 +13,9 @@ import s3utils as s3
 import logging
 import coloredlogs
 import sys
+import mmap
+from multiprocessing.dummy import Pool as ThreadPool
+
 
 currentVersion = '1.0.0'
 
@@ -20,6 +23,57 @@ currentVersion = '1.0.0'
 # We want to use both formatter classes, so a custom class it is
 class CustomFormatter(argparse.RawTextHelpFormatter, argparse.RawDescriptionHelpFormatter):
     pass
+
+
+def mapcount(filename):
+    """ Uses mmap to quickly count the number of lines in a text file.
+    https://stackoverflow.com/a/850962
+
+    Args:
+        filename (str): Name of file containing lines to count
+
+    Returns:
+        int: Total number of lines in text file
+
+    """
+    f = open(filename, "r+")
+
+    buf = mmap.mmap(f.fileno(), 0)
+    lines = 0
+    readline = buf.readline
+    while readline():
+        lines += 1
+    return lines
+
+
+def checkBucket(bucket):
+    if s3.awsCredsConfigured:
+        b = s3.checkAcl(bucket)
+    else:
+        a = s3.checkBucketWithoutCreds(bucket)
+        b = {"found": a, "acls": "unknown - no aws creds"}
+
+    if b["found"]:
+
+        size = s3.getBucketSize(bucket)  # Try to get the size of the bucket
+
+        message = "{0:>11} : {1}".format("[found]", bucket + " | " + size + " | ACLs: " + str(b["acls"]))
+        slog.info(message)
+        flog.debug(message)
+
+        if args.dump:
+            if size not in ["AccessDenied", "AllAccessDisabled"]:
+                slog.info(
+                    "{0:>11} : {1} - {2}".format("[found]", bucket, "Attempting to dump...this may take a while."))
+                s3.dumpBucket(bucket)
+        if args.list:
+            if str(b["acls"]) not in ["AccessDenied", "AllAccessDisabled"]:
+                s3.listBucket(bucket)
+    else:
+        message = "{0:>11} : {1}".format("[not found]", bucket)
+        slog.error(message)
+        flog.debug(message)
+
 
 
 # Instantiate the parser
@@ -97,6 +151,8 @@ if not s3.checkAwsCreds():
     slog.error("Warning: AWS credentials not configured. Open buckets will be shown as closed. Run:"
                " `aws configure` to fix this.\n")
 
+buckets = set()
+
 with open(args.buckets, 'r') as f:
     for line in f:
         line = line.rstrip()            # Remove any extra whitespace
@@ -120,28 +176,8 @@ with open(args.buckets, 'r') as f:
             message = "{0:>11} : {1}".format("[invalid]", bucket)
             slog.error(message)
             continue
-
-        if s3.awsCredsConfigured:
-            b = s3.checkAcl(bucket)
         else:
-            a = s3.checkBucketWithoutCreds(bucket)
-            b = {"found": a, "acls": "unknown - no aws creds"}
+            buckets.add(bucket)
 
-        if b["found"]:
-
-            size = s3.getBucketSize(bucket)  # Try to get the size of the bucket
-
-            message = "{0:>11} : {1}".format("[found]", bucket + " | " + size + " | ACLs: " + str(b["acls"]))
-            slog.info(message)
-            flog.debug(bucket)
-
-            if args.dump:
-                if size not in ["AccessDenied", "AllAccessDisabled"]:
-                    slog.info("{0:>11} : {1} - {2}".format("[found]", bucket, "Attempting to dump...this may take a while."))
-                    s3.dumpBucket(bucket)
-            if args.list:
-                if str(b["acls"]) not in ["AccessDenied", "AllAccessDisabled"]:
-                    s3.listBucket(bucket)
-        else:
-            message = "{0:>11} : {1}".format("[not found]", bucket)
-            slog.error(message)
+pool = ThreadPool(16)
+pool.map(checkBucket, buckets)
