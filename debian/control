@@ -1,0 +1,16 @@
+Source: s3scanner
+Section: cloud
+Priority: optional
+Maintainer: Kali Developers <devel@kali.org>
+Uploaders: Dan Salmon <dan.sa7mon@gmail.com>
+Build-Depends: debhelper-compat (= 12)
+Standards-Version: 4.4.1
+Homepage: https://github.com/sa7mon/S3Scanner
+#Vcs-Browser: https://salsa.debian.org/debian/s3scanner
+#Vcs-Git: https://salsa.debian.org/debian/s3scanner.git
+
+Package: s3scanner
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, python3-pip
+Description: A tool to find open AWS S3 buckets
+ <insert long description, indented with spaces>

@@ -1,0 +1,5 @@
+s3scanner.py /usr/share/s3scanner
+s3utils.py /usr/share/s3scanner
+requirements.txt /usr/share/s3scanner
+buckets /usr/share/s3scanner
+debian/helper-script/s3scanner usr/bin/

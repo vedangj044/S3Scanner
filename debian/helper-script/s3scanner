@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cd /usr/share/s3scanner
+python3 s3scanner.py
