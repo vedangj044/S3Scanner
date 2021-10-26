@@ -9,12 +9,16 @@
 #########
 
 import argparse
+import os
+import sys
+import json
 from os import path
 from sys import exit
 from .S3Bucket import S3Bucket, BucketExists, Permission
 from .S3Service import S3Service
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .exceptions import InvalidEndpointException
+import pika
 
 CURRENT_VERSION = '2.0.1'
 AWS_ENDPOINT = 'https://s3.amazonaws.com'
@@ -111,6 +115,23 @@ def scan_single_bucket(s3service, anons3service, do_dangerous, bucket_name):
     print(f"{b.name} | bucket_exists | {b.get_human_readable_permissions()}")
 
 
+def scan_from_mq(server: str, port: int, queue_name: str, s3service: S3Service, anons3service: S3Service, do_dangerous: bool) -> None:
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host=server, port=port))
+    channel = connection.channel()
+    channel.basic_qos(prefetch_count=200, global_qos=True)
+    channel.queue_declare(queue=queue_name)
+
+    def callback(ch, method, properties, body):
+        message = json.loads(body.decode('utf-8'))
+        scan_single_bucket(s3service, anons3service, do_dangerous, message['bucket_name'])
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=False)
+
+    # print(' [*] Waiting for messages. To exit press Ctrl+C')
+    channel.start_consuming()
+
+
 def main():
     # Instantiate the parser
     parser = argparse.ArgumentParser(description='s3scanner: Audit unsecured S3 buckets\n'
@@ -137,6 +158,8 @@ def main():
     parser_group.add_argument('--buckets-file', '-f', dest='buckets_file',
                               help='Name of text file containing bucket names to check', metavar='file')
     parser_group.add_argument('--bucket', '-b', dest='bucket', help='Name of bucket to check', metavar='bucket')
+    parser_group.add_argument('--rabbitmq-server', dest='rabbitmq_server', help='URL:port of rabbitmq server', metavar='server')
+    parser_scan.add_argument('--queue-name', dest='queue_name', help='Name of queue in RabbitMQ', metavar='queue')
     # TODO: Get help output to not repeat metavar names - i.e. `--bucket FILE, -f FILE`
     #   https://stackoverflow.com/a/9643162/2307994
 
@@ -177,6 +200,22 @@ def main():
             bucketsIn = load_bucket_names_from_file(args.buckets_file)
         elif args.bucket is not None:
             bucketsIn.add(args.bucket)
+        elif args.rabbitmq_server is not None:
+            try:
+                rabbitmq_port = 5672
+                rabbitmq_server = None
+                if args.rabbitmq_server.find(':') != -1:
+                    rabbitmq_server = args.rabbitmq_server[:args.rabbitmq_server.find(':')]
+                    rabbitmq_port = args.rabbitmq_server[args.rabbitmq_server.find(':')+1:]
+                else:
+                    rabbitmq_server = args.rabbitmq_server
+                scan_from_mq(rabbitmq_server, rabbitmq_port, args.queue_name, s3service, anons3service, args.dangerous)
+            except KeyboardInterrupt:
+                print('Interrupted')
+                try:
+                    sys.exit(0)
+                except SystemExit:
+                    os._exit(0)
 
         if args.dangerous:
             print("INFO: Including dangerous checks. WARNING: This may change bucket ACL destructively")
