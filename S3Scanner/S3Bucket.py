@@ -36,10 +36,23 @@ class S3BucketObject:
     __eq__ and __hash__ are implemented to take full advantage of the set() deduplication
     __lt__ is implemented to enable object sorting
     """
+    foundACL = None
     def __init__(self, size, last_modified, key):
         self.size = size
         self.last_modified = last_modified
         self.key = key
+
+        self.AuthUsersRead = Permission.UNKNOWN
+        self.AuthUsersWrite = Permission.UNKNOWN
+        self.AuthUsersReadACP = Permission.UNKNOWN
+        self.AuthUsersWriteACP = Permission.UNKNOWN
+        self.AuthUsersFullControl = Permission.UNKNOWN
+
+        self.AllUsersRead = Permission.UNKNOWN
+        self.AllUsersWrite = Permission.UNKNOWN
+        self.AllUsersReadACP = Permission.UNKNOWN
+        self.AllUsersWriteACP = Permission.UNKNOWN
+        self.AllUsersFullControl = Permission.UNKNOWN
 
     def __eq__(self, other):
         return self.key == other.key
@@ -55,6 +68,41 @@ class S3BucketObject:
 
     def get_human_readable_size(self):
         return bytes_to_human_readable(self.size)
+
+    def get_human_readable_permissions(self):
+        """
+        Returns a human-readable string of allowed permissions for this bucket
+        i.e. "AuthUsers: [Read | WriteACP], AllUsers: [FullControl]"
+
+        :return: str: Human-readable permissions
+        """
+        # Add AuthUsers permissions
+        authUsersPermissions = []
+        if self.AuthUsersFullControl == Permission.ALLOWED:
+            authUsersPermissions.append("FullControl")
+        else:
+            if self.AuthUsersRead == Permission.ALLOWED:
+                authUsersPermissions.append("Read")
+            if self.AuthUsersWrite == Permission.ALLOWED:
+                authUsersPermissions.append("Write")
+            if self.AuthUsersReadACP == Permission.ALLOWED:
+                authUsersPermissions.append("ReadACP")
+            if self.AuthUsersWriteACP == Permission.ALLOWED:
+                authUsersPermissions.append("WriteACP")
+        # Add AllUsers permissions
+        allUsersPermissions = []
+        if self.AllUsersFullControl == Permission.ALLOWED:
+            allUsersPermissions.append("FullControl")
+        else:
+            if self.AllUsersRead == Permission.ALLOWED:
+                allUsersPermissions.append("Read")
+            if self.AllUsersWrite == Permission.ALLOWED:
+                allUsersPermissions.append("Write")
+            if self.AllUsersReadACP == Permission.ALLOWED:
+                allUsersPermissions.append("ReadACP")
+            if self.AllUsersWriteACP == Permission.ALLOWED:
+                allUsersPermissions.append("WriteACP")
+        return f"AuthUsers: [{', '.join(authUsersPermissions)}], AllUsers: [{', '.join(allUsersPermissions)}]"
 
 
 class S3Bucket:

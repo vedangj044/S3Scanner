@@ -16,9 +16,14 @@ test/
 .coverage
 htmlcov/
 temp-*/
-buckets.txt
+bucket*
 
 # Pip build
 build/
 dist/
 S3Scanner.egg-info/
+
+dump/
+log*
+rej.txt
+temp*

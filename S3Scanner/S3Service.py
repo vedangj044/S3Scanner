@@ -53,8 +53,9 @@ class S3Service:
         if profile in session.available_profiles: # use provided profile, if it is availble to use
             session = boto_session.Session(profile_name=profile)
         else:
+            forceNoCreds = True
             print(f"Error: profile \"{profile}\" not found in ~/.aws/credentials")
-            exit(1)
+            # exit(1)
 
         if forceNoCreds or session.get_credentials() is None or session.get_credentials().access_key is None:
             self.aws_creds_configured = False
@@ -324,7 +325,7 @@ class S3Service:
         dest_file_path.parent.mkdir(parents=True, exist_ok=True)  # Equivalent to `mkdir -p`
         self.s3_client.download_file(bucket.name, obj.key, str(dest_file_path))
 
-    def enumerate_bucket_objects(self, bucket):
+    def enumerate_bucket_objects(self, bucket, verbose=False):
         """
         Enumerate all the objects in a bucket. Sets the `BucketSize`, `objects`, and `objects_enumerated` properties
         of `bucket`.
@@ -348,10 +349,18 @@ class S3Service:
                 for item in page['Contents']:
                     obj = S3BucketObject(key=item['Key'], last_modified=item['LastModified'], size=item['Size'])
                     bucket.add_object(obj)
+                    try:
+                        obj.foundACL = self.s3_client.get_object_acl(Bucket=bucket.name, Key=obj.key)
+                        self.parse_found_acl(obj)
+                        if verbose:
+                            print(f"-> {obj.key} | {obj.get_human_readable_permissions()}")
+                    except ClientError as e:
+                        pass
         except ClientError as e:
             if e.response['Error']['Code'] == "AccessDenied" or e.response['Error']['Code'] == "AllAccessDisabled":
                 raise AccessDeniedException("AccessDenied while enumerating bucket objects")
         bucket.objects_enumerated = True
+        print("")
 
     def is_safe_file_to_download(self, file_to_check, dest_directory):
         """
@@ -367,85 +376,85 @@ class S3Service:
         safe_dir = os.path.abspath(dest_directory)
         return os.path.commonpath([safe_dir]) == os.path.commonpath([safe_dir, file_to_check])
 
-    def parse_found_acl(self, bucket):
+    def parse_found_acl(self, obj):
         """
         Translate ACL grants into permission properties. If we were able to read the ACLs, we should be able to skip
         manually checking most permissions
 
-        :param S3Bucket bucket: Bucket whose ACLs we want to parse
+        :param S3obj obj: obj whose ACLs we want to parse
         :return: None
         """
-        if bucket.foundACL is None:
+        if obj.foundACL is None:
             return
 
-        if 'Grants' in bucket.foundACL:
-            for grant in bucket.foundACL['Grants']:
+        if 'Grants' in obj.foundACL:
+            for grant in obj.foundACL['Grants']:
                 if grant['Grantee']['Type'] == 'Group':
                     if 'URI' in grant['Grantee'] and grant['Grantee']['URI'] == 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers':
                         # Permissions have been given to the AuthUsers group
                         if grant['Permission'] == 'FULL_CONTROL':
-                            bucket.AuthUsersRead = Permission.ALLOWED
-                            bucket.AuthUsersWrite = Permission.ALLOWED
-                            bucket.AuthUsersReadACP = Permission.ALLOWED
-                            bucket.AuthUsersWriteACP = Permission.ALLOWED
-                            bucket.AuthUsersFullControl = Permission.ALLOWED
+                            obj.AuthUsersRead = Permission.ALLOWED
+                            obj.AuthUsersWrite = Permission.ALLOWED
+                            obj.AuthUsersReadACP = Permission.ALLOWED
+                            obj.AuthUsersWriteACP = Permission.ALLOWED
+                            obj.AuthUsersFullControl = Permission.ALLOWED
                         elif grant['Permission'] == 'READ':
-                            bucket.AuthUsersRead = Permission.ALLOWED
+                            obj.AuthUsersRead = Permission.ALLOWED
                         elif grant['Permission'] == 'READ_ACP':
-                            bucket.AuthUsersReadACP = Permission.ALLOWED
+                            obj.AuthUsersReadACP = Permission.ALLOWED
                         elif grant['Permission'] == 'WRITE':
-                            bucket.AuthUsersWrite = Permission.ALLOWED
+                            obj.AuthUsersWrite = Permission.ALLOWED
                         elif grant['Permission'] == 'WRITE_ACP':
-                            bucket.AuthUsersWriteACP = Permission.ALLOWED
+                            obj.AuthUsersWriteACP = Permission.ALLOWED
 
                     elif 'URI' in grant['Grantee'] and grant['Grantee']['URI'] == 'http://acs.amazonaws.com/groups/global/AllUsers':
                         # Permissions have been given to the AllUsers group
                         if grant['Permission'] == 'FULL_CONTROL':
-                            bucket.AllUsersRead = Permission.ALLOWED
-                            bucket.AllUsersWrite = Permission.ALLOWED
-                            bucket.AllUsersReadACP = Permission.ALLOWED
-                            bucket.AllUsersWriteACP = Permission.ALLOWED
-                            bucket.AllUsersFullControl = Permission.ALLOWED
+                            obj.AllUsersRead = Permission.ALLOWED
+                            obj.AllUsersWrite = Permission.ALLOWED
+                            obj.AllUsersReadACP = Permission.ALLOWED
+                            obj.AllUsersWriteACP = Permission.ALLOWED
+                            obj.AllUsersFullControl = Permission.ALLOWED
                         elif grant['Permission'] == 'READ':
-                            bucket.AllUsersRead = Permission.ALLOWED
+                            obj.AllUsersRead = Permission.ALLOWED
                         elif grant['Permission'] == 'READ_ACP':
-                            bucket.AllUsersReadACP = Permission.ALLOWED
+                            obj.AllUsersReadACP = Permission.ALLOWED
                         elif grant['Permission'] == 'WRITE':
-                            bucket.AllUsersWrite = Permission.ALLOWED
+                            obj.AllUsersWrite = Permission.ALLOWED
                         elif grant['Permission'] == 'WRITE_ACP':
-                            bucket.AllUsersWriteACP = Permission.ALLOWED
+                            obj.AllUsersWriteACP = Permission.ALLOWED
 
             # All permissions not explicitly granted in the ACL are denied
             # TODO: Simplify this
-            if bucket.AuthUsersRead == Permission.UNKNOWN:
-                bucket.AuthUsersRead = Permission.DENIED
+            if obj.AuthUsersRead == Permission.UNKNOWN:
+                obj.AuthUsersRead = Permission.DENIED
 
-            if bucket.AuthUsersWrite == Permission.UNKNOWN:
-                bucket.AuthUsersWrite = Permission.DENIED
+            if obj.AuthUsersWrite == Permission.UNKNOWN:
+                obj.AuthUsersWrite = Permission.DENIED
 
-            if bucket.AuthUsersReadACP == Permission.UNKNOWN:
-                bucket.AuthUsersReadACP = Permission.DENIED
+            if obj.AuthUsersReadACP == Permission.UNKNOWN:
+                obj.AuthUsersReadACP = Permission.DENIED
 
-            if bucket.AuthUsersWriteACP == Permission.UNKNOWN:
-                bucket.AuthUsersWriteACP = Permission.DENIED
+            if obj.AuthUsersWriteACP == Permission.UNKNOWN:
+                obj.AuthUsersWriteACP = Permission.DENIED
 
-            if bucket.AuthUsersFullControl == Permission.UNKNOWN:
-                bucket.AuthUsersFullControl = Permission.DENIED
+            if obj.AuthUsersFullControl == Permission.UNKNOWN:
+                obj.AuthUsersFullControl = Permission.DENIED
 
-            if bucket.AllUsersRead == Permission.UNKNOWN:
-                bucket.AllUsersRead = Permission.DENIED
+            if obj.AllUsersRead == Permission.UNKNOWN:
+                obj.AllUsersRead = Permission.DENIED
 
-            if bucket.AllUsersWrite == Permission.UNKNOWN:
-                bucket.AllUsersWrite = Permission.DENIED
+            if obj.AllUsersWrite == Permission.UNKNOWN:
+                obj.AllUsersWrite = Permission.DENIED
 
-            if bucket.AllUsersReadACP == Permission.UNKNOWN:
-                bucket.AllUsersReadACP = Permission.DENIED
+            if obj.AllUsersReadACP == Permission.UNKNOWN:
+                obj.AllUsersReadACP = Permission.DENIED
 
-            if bucket.AllUsersWriteACP == Permission.UNKNOWN:
-                bucket.AllUsersWriteACP = Permission.DENIED
+            if obj.AllUsersWriteACP == Permission.UNKNOWN:
+                obj.AllUsersWriteACP = Permission.DENIED
 
-            if bucket.AllUsersFullControl == Permission.UNKNOWN:
-                bucket.AllUsersFullControl = Permission.DENIED
+            if obj.AllUsersFullControl == Permission.UNKNOWN:
+                obj.AllUsersFullControl = Permission.DENIED
 
     def validate_endpoint_url(self, use_ssl=True, verify_ssl=True, endpoint_address_style='path'):
         """
